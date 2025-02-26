@@ -8,6 +8,14 @@ if ! command -v tegrastats &>/dev/null; then
   exit 1
 fi
 
+# Check if NVIDIA Container Runtime is installed
+if ! dpkg -l | grep -q nvidia-container-runtime; then
+  echo "******************************"
+  echo "NVIDIA Container Runtime is not installed! Install it first."
+  echo "******************************"
+  exit 1
+fi
+
 # UI permissions
 XSOCK=/tmp/.X11-unix
 XAUTH=/tmp/.docker.xauth
@@ -15,6 +23,12 @@ touch $XAUTH
 xauth nlist $DISPLAY | sed -e 's/^..../ffff/' | xauth -f $XAUTH nmerge -
 
 xhost +local:docker
+
+# Ensure DISPLAY is set correctly
+if [ -z "$DISPLAY" ]; then
+  export DISPLAY=:0
+  echo "DISPLAY was not set. Defaulting to :0"
+fi
 
 docker pull jahaniam/orbslam3:jetson
 
