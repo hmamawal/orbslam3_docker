@@ -1,57 +1,33 @@
 #!/bin/bash
+set -e
 
-# Check for Jetson-specific GPU tools
-if ! command -v tegrastats &>/dev/null; then
-  echo "******************************"
-  echo "tegrastats not found! Ensure NVIDIA Jetson drivers are installed."
-  echo "******************************"
-  exit 1
-fi
+# 1. Build the Docker image for Jetson (using updated Dockerfile)
+IMAGE_NAME="orbslam3:jetson"
+docker build -t $IMAGE_NAME -f Dockerfile.jetson .
 
-# Check if NVIDIA Container Runtime is installed
-if ! dpkg -l | grep -q nvidia-container-runtime; then
-  echo "******************************"
-  echo "NVIDIA Container Runtime is not installed! Install it first."
-  echo "******************************"
-  exit 1
-fi
+# 2. Remove old ORB_SLAM3 output on host and create volume directory
+[ -d "ORB_SLAM3" ] && sudo rm -rf ORB_SLAM3
+mkdir ORB_SLAM3
 
-# UI permissions
-XSOCK=/tmp/.X11-unix
-XAUTH=/tmp/.docker.xauth
-touch $XAUTH
-xauth nlist $DISPLAY | sed -e 's/^..../ffff/' | xauth -f $XAUTH nmerge -
-
-xhost +local:docker
-
-# Ensure DISPLAY is set correctly
-if [ -z "$DISPLAY" ]; then
-  export DISPLAY=:0
-  echo "DISPLAY was not set. Defaulting to :0"
-fi
-
-docker pull jahaniam/orbslam3:jetson
-
-# Remove existing container
-docker rm -f orbslam3 &>/dev/null
-[ -d "ORB_SLAM3" ] && sudo rm -rf ORB_SLAM3 && mkdir ORB_SLAM3
-
-# Create a new container
-docker run -td --runtime nvidia --privileged --net=host --ipc=host \
-    --name="orbslam3" \
-    --gpus all \
-    -e "DISPLAY=$DISPLAY" \
-    -e "QT_X11_NO_MITSHM=1" \
-    -v "/tmp/.X11-unix:/tmp/.X11-unix:rw" \
-    -e "XAUTHORITY=$XAUTH" \
-    -e ROS_IP=127.0.0.1 \
-    --cap-add=SYS_PTRACE \
-    -v `pwd`/Datasets:/Datasets \
-    -v /etc/group:/etc/group:ro \
+# 3. Run a container with NVIDIA runtime, mounting X11 and the ORB_SLAM3 folder
+docker run -d --name orbslam3_container --runtime=nvidia \
+    -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
     -v `pwd`/ORB_SLAM3:/ORB_SLAM3 \
-    jahaniam/orbslam3:jetson bash
+    -w /ORB_SLAM3 --net=host $IMAGE_NAME bash
 
-# Git pull orbslam and compile
-docker exec -it orbslam3 bash -i -c "git clone -b add_euroc_example.sh https://github.com/jahaniam/ORB_SLAM3.git /ORB_SLAM3 && cd /ORB_SLAM3 && chmod +x build.sh && ./build.sh "
-# Compile ORBSLAM3-ROS
-docker exec -it orbslam3 bash -i -c "echo 'ROS_PACKAGE_PATH=/opt/ros/noetic/share:/ORB_SLAM3/Examples/ROS'>>~/.bashrc && source ~/.bashrc && cd /ORB_SLAM3 && chmod +x build_ros.sh && ./build_ros.sh"
+# Allow container X access (assumes xhost installed on host)
+xhost +local:root
+
+# 4. Inside the container: clone ORB_SLAM3 and build it
+docker exec orbslam3_container bash -c "\
+    git clone --recursive https://github.com/UZ-SLAMLab/ORB_SLAM3.git /ORB_SLAM3 && \
+    cd /ORB_SLAM3 && chmod +x build.sh && ./build.sh"
+
+# 5. Build the ROS node (if needed)
+docker exec orbslam3_container bash -c "\
+    source /opt/ros/noetic/setup.bash && \
+    echo 'export ROS_PACKAGE_PATH=\$ROS_PACKAGE_PATH:/ORB_SLAM3/Examples/ROS' >> ~/.bashrc && \
+    cd /ORB_SLAM3 && chmod +x build_ros.sh && ./build_ros.sh"
+
+echo "ORB-SLAM3 has been built inside the container. You can now enter the container with:"
+echo "    docker exec -it orbslam3_container bash"
