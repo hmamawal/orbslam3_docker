@@ -1,72 +1,66 @@
-FROM nvcr.io/nvidia/l4t-base:r32.7.1
+# Base image: L4T JetPack (Ubuntu 20.04 with JetPack components for Jetson AGX Orin)
+FROM nvcr.io/nvidia/l4t-jetpack:r35.2.1
 
+# Set non-interactive debconf
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Update and install basic tools and dependencies
 RUN apt-get update && apt-get install -y \
-    cuda-toolkit-10-2 \
-    libcudnn8 \
-    tensorrt \
+    gnupg2 curl lsb-release wget build-essential cmake git pkg-config unzip vim nano \
+    python3-pip python3-dev python3-numpy \
+    libgl1-mesa-dev libglew-dev libgtk-3-dev libpython3-dev libeigen3-dev \
+    libavcodec-dev libavformat-dev libswscale-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
     && rm -rf /var/lib/apt/lists/*
 
-ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get install -y gnupg2 curl lsb-core vim wget python3-pip libpng16-16 libjpeg-turbo8 libtiff5
+# Set up ROS Noetic apt repository and key
+RUN echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list && \
+    apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-key F42ED6FBAB17C654
 
-# Installing ROS-noetic
-RUN sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
-RUN apt-key adv --keyserver 'hkp://keyserver.ubuntu.com:80' --recv-key C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654
+# Install ROS Noetic (choose a lightweight metapackage if desired)
+RUN apt-get update && apt-get install -y ros-noetic-ros-base python3-rosdep python3-rosinstall-generator python3-wstool python3-vcstools python3-catkin-tools && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN apt update && apt install -y ros-noetic-desktop python3-rosdep
+# Initialize rosdep
 RUN rosdep init && rosdep update
-RUN echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc
-RUN apt install -y python3-rosinstall python3-rosinstall-generator python3-wstool build-essential
 
-# Installing python-catkin
-RUN wget http://packages.ros.org/ros.key -O - | sudo apt-key add -
-RUN apt-get update && apt-get install -y python3-catkin-tools software-properties-common
-RUN echo "source /opt/ros/noetic/setup.bash" >> ~/.bash_profile
+# Source ROS setup in bashrc for convenience
+RUN echo "source /opt/ros/noetic/setup.bash" >> /root/.bashrc
 
-RUN apt-get install -y \
-    cmake \
-    build-essential \
-    git \
-    unzip \
-    pkg-config \
-    python3-dev \
-    python3-numpy \
-    libgl1-mesa-dev \
-    libglew-dev \
-    libpython3-dev \
-    libeigen3-dev \
-    apt-transport-https \
-    ca-certificates \
-    software-properties-common
+# [Optional] Install Jetson-specific multimedia/camera packages if needed (e.g., V4L2, GStreamer plugins)
+# RUN apt-get update && apt-get install -y nvidia-l4t-gstreamer nvidia-l4t-multimedia && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://download.sublimetext.com/sublimehq-pub.gpg | sudo apt-key add -
-RUN add-apt-repository "deb https://download.sublimetext.com/ apt/stable/"
-RUN apt update && apt install -y sublime-text
+# Environment variables for NVIDIA Container Runtime
+ENV NVIDIA_VISIBLE_DEVICES=all 
+ENV NVIDIA_DRIVER_CAPABILITIES=all
 
-# Build OpenCV
-RUN apt-get install -y python3-dev python3-numpy libavcodec-dev libavformat-dev libswscale-dev \
-    libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev libgtk-3-dev
-RUN cd /tmp && git clone https://github.com/opencv/opencv.git && \
-    cd opencv && git checkout 4.4.0 && \
-    mkdir build && cd build && \
-    cmake -D CMAKE_BUILD_TYPE=Release -D BUILD_EXAMPLES=OFF  -D BUILD_DOCS=OFF -D BUILD_PERF_TESTS=OFF -D BUILD_TESTS=OFF -D CMAKE_INSTALL_PREFIX=/usr/local .. && \
+# Build OpenCV from source (with CUDA support)
+WORKDIR /tmp
+RUN git clone https://github.com/opencv/opencv.git && cd opencv && git checkout 4.5.4 && mkdir build && cd build && \
+    cmake -D CMAKE_BUILD_TYPE=Release \
+          -D CMAKE_INSTALL_PREFIX=/usr/local \
+          -D WITH_CUDA=ON -D WITH_CUDNN=ON -D CUDA_ARCH_BIN="8.7" \
+          -D BUILD_OPENCV_PYTHON3=ON -D BUILD_OPENCV_GUI=ON \
+          -D BUILD_EXAMPLES=OFF -D BUILD_TESTS=OFF -D BUILD_DOCS=OFF .. && \
     make -j$(nproc) && make install && \
-    cd / && rm -rf /tmp/opencv
+    cd /tmp && rm -rf opencv
 
-# Build Pangolin
-RUN cd /tmp && git clone https://github.com/stevenlovegrove/Pangolin && \
-    cd Pangolin && git checkout v0.6 && mkdir build && cd build && \
-    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=-std=c++11 .. && \
+# Build Pangolin (for ORB-SLAM3 visualization)
+RUN git clone https://github.com/stevenlovegrove/Pangolin.git && cd Pangolin && git checkout v0.6 && \
+    mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DCPP11_NO_BOOST=ON .. && \
     make -j$(nproc) && make install && \
-    cd / && rm -rf /tmp/Pangolin
+    cd /tmp && rm -rf Pangolin
 
+# Copy ROS entrypoint script
 COPY ros_entrypoint.sh /ros_entrypoint.sh
 RUN chmod +x /ros_entrypoint.sh
-ENV ROS_DISTRO noetic
-ENV LANG en_US.UTF-8
+
+# Set ROS environment variables
+ENV ROS_DISTRO=noetic
+ENV LANG=C.UTF-8
+
+# Create workspace for ORB_SLAM3 source
+RUN mkdir -p /ORB_SLAM3
+WORKDIR /ORB_SLAM3
 
 ENTRYPOINT ["/ros_entrypoint.sh"]
-
-RUN mkdir /ORB_SLAM3
-WORKDIR /ORB_SLAM3
 CMD ["bash"]
