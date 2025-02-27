@@ -3,7 +3,7 @@ set -e
 
 # 1. Build the Docker image for Jetson (using updated Dockerfile)
 IMAGE_NAME="orbslam3:jetson"
-docker build -t $IMAGE_NAME -f Dockerfile.jetson .
+docker build -t $IMAGE_NAME -f Dockerfile_jetson.cuda .
 
 # 2. Remove old ORB_SLAM3 output on host and create volume directory
 [ -d "ORB_SLAM3" ] && sudo rm -rf ORB_SLAM3
