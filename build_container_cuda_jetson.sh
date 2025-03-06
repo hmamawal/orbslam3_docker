@@ -18,16 +18,14 @@ docker run -d --name orbslam3_container --runtime=nvidia \
 # Allow container X access (assumes xhost installed on host)
 xhost +local:root
 
-# 4. Inside the container: clone ORB_SLAM3 and build it
+# 4. Inside the container: verify OpenCV installation
 docker exec orbslam3_container bash -c "\
-    git clone --recursive https://github.com/UZ-SLAMLab/ORB_SLAM3.git /ORB_SLAM3 && \
-    cd /ORB_SLAM3 && chmod +x build.sh && ./build.sh"
+    python3 -c 'import cv2; print(cv2.getBuildInformation())' | grep -i 'cuda'"
 
-# 5. Build the ROS node (if needed)
+# 5. Install missing Python dependencies inside the container
 docker exec orbslam3_container bash -c "\
-    source /opt/ros/noetic/setup.bash && \
-    echo 'export ROS_PACKAGE_PATH=\$ROS_PACKAGE_PATH:/ORB_SLAM3/Examples/ROS' >> ~/.bashrc && \
-    cd /ORB_SLAM3 && chmod +x build_ros.sh && ./build_ros.sh"
+    python3 -m pip install --upgrade pip && \
+    python3 -m pip install numpy"
 
 echo "ORB-SLAM3 has been built inside the container. You can now enter the container with:"
 echo "    docker exec -it orbslam3_container bash"
