@@ -68,5 +68,17 @@ ENV LANG=C.UTF-8
 RUN mkdir -p /ORB_SLAM3
 WORKDIR /ORB_SLAM3
 
+# Download and extract ORB-SLAM3
+WORKDIR /ORB_SLAM3
+RUN apt-get update && apt-get install -y wget unzip && \
+    wget -O ORB_SLAM3.zip https://github.com/UZ-SLAMLab/ORB_SLAM3/archive/refs/heads/master.zip && \
+    unzip ORB_SLAM3.zip && \
+    mv ORB_SLAM3-master/* . && \
+    rm -rf ORB_SLAM3.zip ORB_SLAM3-master && \
+    chmod +x build.sh && ./build.sh && \
+    chmod +x build_ros.sh && ./build_ros.sh
+
+
+
 ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["bash"]
